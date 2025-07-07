@@ -69,11 +69,11 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     reply: str
 
-@app.get("/health")
+@app.get("/api/health")
 async def health_check():
     return {"status": "ok"}
 
-@app.post("/chat", response_model=ChatResponse)
+@app.post("/api/chat", response_model=ChatResponse)
 async def chat_endpoint(req: ChatRequest, request: Request):
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
