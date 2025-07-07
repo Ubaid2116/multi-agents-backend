@@ -11,19 +11,16 @@ from agents import Agent, Runner
 from agents import ModelSettings, RunConfig, OpenAIChatCompletionsModel, AsyncOpenAI
 from openai.types.responses import ResponseTextDeltaEvent
 
-# Load environment variables
 load_dotenv()
 google_api_key = os.getenv("GEMINI_API_KEY")
 if not google_api_key:
     raise ValueError("GEMINI_API_KEY is not set.")
 
-# Initialize external client
 external_client = AsyncOpenAI(
     api_key=google_api_key,
     base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
 )
 
-# Define agents
 content_agent = Agent(
     name="ContentWriter",
     instructions="You’re a specialist content writer. Handle only content creation tasks."
@@ -46,7 +43,6 @@ manager_agent = Agent(
     handoffs=[content_agent, marketing_agent, webdev_agent]
 )
 
-# Define model and run config
 model = OpenAIChatCompletionsModel(
     model="gemini-2.0-flash",
     openai_client=external_client,
@@ -57,20 +53,16 @@ run_config = RunConfig(
     tracing_disabled=True,
 )
 
-# Initialize FastAPI
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "https://multi-agents-openai.vercel.app"],
+    allow_origins=["http://localhost:3000", "https://multi-agents-openai.vercel.app", "https://kzmihj4sv8yv1gxiaw6g.lite.vusercontent.net/"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Short-term memory: keep last 10 messages per session
 session_memories = defaultdict(list)
 
-# Request/Response models
 class ChatRequest(BaseModel):
     message: str
 
@@ -85,54 +77,27 @@ async def health_check():
 async def chat_endpoint(req: ChatRequest, request: Request):
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
-
     session_id = request.headers.get("X-Session-Id", "default")
     memory = session_memories[session_id]
-
     memory.append({"role": "user", "content": req.message})
-    memory[:] = memory[-100:]  # Keep last 100 messages
-
-    result = await Runner.run(
-        manager_agent,
-        req.message,
-        run_config=run_config,
-        context={"memory": memory}
-    )
-
+    result = await Runner.run(manager_agent, req.message, run_config=run_config, context={"memory": memory})
     reply = result.final_output
     memory.append({"role": "assistant", "content": reply})
-    memory[:] = memory[-100:]  # Again limit to last 100
-
     return {"reply": reply}
 
 @app.post("/chat/stream")
 async def chat_stream(req: ChatRequest, request: Request):
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
-
     session_id = request.headers.get("X-Session-Id", "default")
     memory = session_memories[session_id]
-
     memory.append({"role": "user", "content": req.message})
-    memory[:] = memory[-10:]
-
-    result = Runner.run_streamed(
-        manager_agent,
-        req.message,
-        run_config=run_config,
-        context={"memory": memory}
-    )
+    result = Runner.run_streamed(manager_agent, req.message, run_config=run_config, context={"memory": memory})
 
     async def event_generator():
-        full_reply = ""
         async for event in result.stream_events():
             if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
-                delta = event.data.delta
-                full_reply += delta
-                yield delta
-        memory.append({"role": "assistant", "content": full_reply})
-        memory[:] = memory[-10:]
-
+                yield event.data.delta
     return StreamingResponse(event_generator(), media_type="text/plain")
 
 if __name__ == "__main__":
